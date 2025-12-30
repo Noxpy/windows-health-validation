@@ -3,12 +3,12 @@
     Executes DISM /RestoreHealth with reboot-awareness, structured logging, and timeout protection.
 
 .DESCRIPTION
-    Runs DISM /RestoreHealth directly from PowerShell after validating:
+    Runs DISM /RestoreHealth after validating:
     - Administrative privileges
     - Pending reboot conditions
     - Disk availability
-    Produces a timestamped log and structured JSON summary.
-    Includes timeout protection for automation safety.
+    Captures full output to a timestamped log file and produces structured JSON.
+    Timeout protection prevents hanging scans in automated environments.
 
 .AUTHOR
     Anthony Marturano
@@ -17,23 +17,28 @@
     2025-12-30
 
 .EXIT CODES
-    0 = Successfully repaired or no corruption detected
-    1 = Repair completed with warnings
+    0 = RestoreHealth completed successfully
+    1 = RestoreHealth completed with warnings or errors
     3 = Pre-check failure, execution error, or timeout
 
 .NOTES
     - Write-capable operation
-    - Safe for automated execution
+    - Safe for scheduled tasks
 #>
 
 # ---------------- Configuration ----------------
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogRoot   = "C:\Temp\ErrorPolicyLogs"
 $LogFile   = Join-Path $LogRoot "DISM_RestoreHealth_$Timestamp.log"
-$TimeoutMs = 120000 # 2 minutes, adjust as needed
+$TimeoutMs = 300000   # 5 minutes, adjust as needed
 $Drive     = "C:"
 
-if (-not (Test-Path $LogRoot)) { New-Item -Path $LogRoot -ItemType Directory -Force | Out-Null }
+# Ensure log directory exists
+if (-not (Test-Path $LogRoot)) {
+    try { New-Item -Path $LogRoot -ItemType Directory -Force | Out-Null }
+    catch { Write-Host "ERROR: Cannot create log directory." -ForegroundColor Red; exit 3 }
+}
+
 "==== DISM /RestoreHealth START ====" | Out-File $LogFile -Append
 
 # ---------------- Admin Check ----------------
@@ -42,29 +47,74 @@ function Test-IsAdmin {
     $p  = New-Object Security.Principal.WindowsPrincipal($id)
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
-if (-not (Test-IsAdmin)) { "ERROR: Administrative privileges required." | Out-File $LogFile -Append; exit 3 }
 
-# ---------------- Pending Reboot ----------------
+if (-not (Test-IsAdmin)) {
+    "ERROR: Administrative privileges required." | Out-File $LogFile -Append
+    exit 3
+}
+
+# ---------------- Pending Reboot Detection ----------------
 function Test-PendingReboot {
     $keys = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
     )
-    foreach ($k in $keys) { if (Test-Path $k) { return $true } }
-    return $false
+
+    foreach ($key in $keys) {
+        if (Test-Path $key) { return $true }
+    }
+
+    $pendingRename = Get-ItemProperty `
+        -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" `
+        -Name "PendingFileRenameOperations" `
+        -ErrorAction SilentlyContinue
+
+    return [bool]$pendingRename
 }
+
 $RebootPending = Test-PendingReboot
-$RebootStatus  = if ($RebootPending) {"WARNING: A system reboot is pending."} else {"No reboot flags detected."}
+$RebootStatus  = if ($RebootPending) {
+    "WARNING: A system reboot is pending. DISM /RestoreHealth will not run."
+} else {
+    "No reboot flags detected."
+}
+
 $RebootStatus | Write-Host -ForegroundColor Cyan
 $RebootStatus | Out-File $LogFile -Append
 
+# Abort if reboot pending
+if ($RebootPending) {
+    $SkippedMessage = "ABORTED: Reboot pending. DISM /RestoreHealth was not executed."
+    Write-Host $SkippedMessage -ForegroundColor Yellow
+    $SkippedMessage | Out-File $LogFile -Append
+
+    # Structured JSON summary for skipped execution
+    [PSCustomObject]@{
+        Timestamp     = (Get-Date).ToString("s")
+        Operation     = "DISM /RestoreHealth"
+        Drive         = $Drive
+        ResultSummary = "Skipped due to pending reboot."
+        RebootPending = $true
+        ResultCode    = 3
+    } | ConvertTo-Json -Depth 2 | Out-File $LogFile -Append
+
+    exit 3
+}
+
 # ---------------- Disk Check ----------------
-if (-not (Test-Path "$Drive\")) { "ERROR: Target drive $Drive not accessible." | Out-File $LogFile -Append; exit 3 }
+if (-not (Test-Path "$Drive\")) {
+    "ERROR: Target drive $Drive not accessible." | Out-File $LogFile -Append
+    exit 3
+}
 
 # ---------------- Execute DISM /RestoreHealth ----------------
 Write-Host "Starting DISM /RestoreHealth..." -ForegroundColor Cyan
-$job = Start-Job -ScriptBlock { & dism.exe /Online /Cleanup-Image /RestoreHealth 2>&1 | Out-String }
 
+$job = Start-Job -ScriptBlock {
+    & dism.exe /Online /Cleanup-Image /RestoreHealth 2>&1 | Out-String
+}
+
+# Timeout handling
 if (-not (Wait-Job $job -Timeout ($TimeoutMs / 1000))) {
     "ERROR: DISM /RestoreHealth exceeded timeout ($TimeoutMs ms)." | Out-File $LogFile -Append
     if ((Get-Command Stop-Job).Parameters.Keys -contains 'Force') { Stop-Job $job -Force } else { Stop-Job $job }
@@ -78,37 +128,37 @@ if ((Get-Command Remove-Job).Parameters.Keys -contains 'Force') { Remove-Job $jo
 
 # ---------------- Parse Output ----------------
 $logText = $DismOutput
-$repairPattern  = "successfully|completed|repaired"
-$failedPattern  = "failed|error"
+$successPattern = "completed successfully|operation completed"
+$warningPattern = "reboot required|warning|error: 0x"
 
-$ComponentSummary = if ($logText -match $failedPattern) {
-    "DISM encountered errors during repair."
-} elseif ($logText -match $repairPattern) {
-    "DISM completed repairs successfully."
+$RestoreSummary = if ($logText -match $warningPattern) {
+    "DISM /RestoreHealth completed with warnings or errors."
 } else {
-    "DISM /RestoreHealth completed with warnings or ambiguous output."
+    "DISM /RestoreHealth completed successfully."
 }
 
-# ---------------- Structured JSON ----------------
+# ---------------- Structured JSON Summary ----------------
 [PSCustomObject]@{
     Timestamp       = (Get-Date).ToString("s")
     Operation       = "DISM /RestoreHealth"
     Drive           = $Drive
-    ComponentStatus = $ComponentSummary
+    ResultSummary   = $RestoreSummary
     RebootPending   = $RebootPending
-    ResultCode      = if ($logText -match $failedPattern) {1} else {0}
+    ResultCode      = if ($logText -match $warningPattern) {1} else {0}
 } | ConvertTo-Json -Depth 2 | Out-File $LogFile -Append
 
 # ---------------- Final Output ----------------
 $FinalSummary = @"
-$ComponentSummary
+$RestoreSummary
 Full log: $LogFile
 DISM log: C:\Windows\Logs\DISM\DISM.log
 CBS log:  C:\Windows\Logs\CBS\CBS.log
 "@
+
 Write-Host $FinalSummary -ForegroundColor Green
 $FinalSummary | Out-File $LogFile -Append
 
 "==== DISM /RestoreHealth END ====" | Out-File $LogFile -Append
 
-if ($logText -match $failedPattern) { exit 1 } else { exit 0 }
+# Exit code
+if ($logText -match $warningPattern) { exit 1 } else { exit 0 }
