@@ -1,12 +1,15 @@
 <#
 .SYNOPSIS
-    Executes DISM /ComponentCleanup with reboot-awareness, structured logging, and timeout protection.
+    Executes DISM Component Cleanup with reboot-awareness, structured logging, and timeout protection.
 
 .DESCRIPTION
-    Runs DISM /ComponentCleanup to reduce the WinSxS component store size by removing superseded components.
-    Validates administrative privileges, detects pending reboot conditions, and captures full output
-    to a timestamped log file with a structured JSON summary.
-    Includes timeout protection to prevent indefinite hangs in automated environments.
+    Runs DISM Component Cleanup (superseded component removal) with validation:
+    - Administrative privileges
+    - Pending reboot detection
+    - Disk availability
+    Captures full output to a timestamped log file and produces structured JSON.
+    Timeout protection prevents hanging scans in automation environments.
+    Automatically selects the correct DISM parameter depending on OS version.
 
 .AUTHOR
     Anthony Marturano
@@ -16,20 +19,19 @@
 
 .EXIT CODES
     0 = Cleanup completed successfully or nothing to clean
-    1 = Cleanup completed with warnings
+    1 = Cleanup completed with warnings or errors
     3 = Pre-check failure, execution error, or timeout
 
 .NOTES
     - Write-capable operation
-    - No reboot flags are created or modified
-    - Safe for automation and scheduled tasks
+    - Safe for scheduled tasks
 #>
 
 # ---------------- Configuration ----------------
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogRoot   = "C:\Temp\ErrorPolicyLogs"
 $LogFile   = Join-Path $LogRoot "DISM_ComponentCleanup_$Timestamp.log"
-$TimeoutMs = 120000   # 2 minutes
+$TimeoutMs = 120000  # 2 minutes
 $Drive     = "C:"
 
 if (-not (Test-Path $LogRoot)) {
@@ -55,11 +57,12 @@ if (-not (Test-IsAdmin)) {
 function Test-PendingReboot {
     $keys = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired",
-        "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
     )
 
-    if (Test-Path $keys[0] -or Test-Path $keys[1]) { return $true }
+    foreach ($key in $keys) {
+        if (Test-Path $key) { return $true }
+    }
 
     $pendingRename = Get-ItemProperty `
         -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" `
@@ -79,41 +82,46 @@ $RebootStatus  = if ($RebootPending) {
 $RebootStatus | Write-Host -ForegroundColor Cyan
 $RebootStatus | Out-File $LogFile -Append
 
+# Abort if reboot pending
+if ($RebootPending) {
+    "ABORTED: Reboot pending. Component Cleanup will not run." | Write-Host -ForegroundColor Yellow
+    "ABORTED: Reboot pending. Component Cleanup will not run." | Out-File $LogFile -Append
+    exit 3
+}
+
 # ---------------- Disk Check ----------------
 if (-not (Test-Path "$Drive\")) {
     "ERROR: Target drive $Drive not accessible." | Out-File $LogFile -Append
     exit 3
 }
 
-# ---------------- Execute DISM /ComponentCleanup ----------------
-Write-Host "Starting DISM /ComponentCleanup..." -ForegroundColor Cyan
+# ---------------- Determine DISM Cleanup Parameter ----------------
+$osVersion = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").CurrentBuild
+# /StartComponentCleanup works on all supported builds
+$DismParam = "/StartComponentCleanup"
+
+Write-Host "DISM parameter selected: $DismParam" -ForegroundColor Cyan
+"DISM parameter selected: $DismParam" | Out-File $LogFile -Append
+
+# ---------------- Execute DISM Component Cleanup ----------------
+Write-Host "Starting DISM Component Cleanup..." -ForegroundColor Cyan
 
 $job = Start-Job -ScriptBlock {
-    & dism.exe /Online /Cleanup-Image /ComponentCleanup 2>&1 | Out-String
-}
+    param($param)
+    & dism.exe /Online /Cleanup-Image $param 2>&1 | Out-String
+} -ArgumentList $DismParam
 
+# Timeout handling
 if (-not (Wait-Job $job -Timeout ($TimeoutMs / 1000))) {
-    "ERROR: DISM /ComponentCleanup exceeded timeout ($TimeoutMs ms)." |
-        Out-File $LogFile -Append
-
-    if ((Get-Command Stop-Job).Parameters.Keys -contains 'Force') {
-        Stop-Job $job -Force
-    } else {
-        Stop-Job $job
-    }
-
+    "ERROR: DISM Component Cleanup exceeded timeout ($TimeoutMs ms)." | Out-File $LogFile -Append
+    if ((Get-Command Stop-Job).Parameters.Keys -contains 'Force') { Stop-Job $job -Force } else { Stop-Job $job }
     Remove-Job $job
     exit 3
 }
 
 $DismOutput = Receive-Job $job
 $DismOutput | Out-File $LogFile -Append
-
-if ((Get-Command Remove-Job).Parameters.Keys -contains 'Force') {
-    Remove-Job $job -Force
-} else {
-    Remove-Job $job
-}
+if ((Get-Command Remove-Job).Parameters.Keys -contains 'Force') { Remove-Job $job -Force } else { Remove-Job $job }
 
 # ---------------- Parse Output ----------------
 $logText = $DismOutput
@@ -132,7 +140,7 @@ $ComponentSummary = if ($logText -match $errorPattern) {
 # ---------------- Structured JSON Summary ----------------
 [PSCustomObject]@{
     Timestamp       = (Get-Date).ToString("s")
-    Operation       = "DISM /ComponentCleanup"
+    Operation       = "DISM Component Cleanup"
     Drive           = $Drive
     ResultSummary   = $ComponentSummary
     RebootPending   = $RebootPending
@@ -152,4 +160,5 @@ $FinalSummary | Out-File $LogFile -Append
 
 "==== DISM /ComponentCleanup END ====" | Out-File $LogFile -Append
 
+# Exit code
 if ($logText -match $errorPattern) { exit 1 } else { exit 0 }
