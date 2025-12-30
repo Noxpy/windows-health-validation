@@ -20,18 +20,13 @@
     0 = No corruption detected
     1 = Potential corruption detected
     3 = Pre-check failure, execution error, or timeout
-
-.NOTES
-    - Standalone PowerShell execution
-    - No RMM dependencies
-    - Read-only operation (safe for scheduled tasks)
 #>
 
 # ---------------- Configuration ----------------
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogRoot   = "C:\Temp\ErrorPolicyLogs"
 $LogFile   = Join-Path $LogRoot "DISM_ScanHealth_$Timestamp.log"
-$TimeoutMs = 60000   # 60 seconds, adjust as needed
+$TimeoutMs = 60000   # 60 seconds
 $Drive     = "C:"
 
 # Ensure log directory exists
@@ -64,11 +59,9 @@ function Test-PendingReboot {
 }
 
 $RebootPending = Test-PendingReboot
-if ($RebootPending) {
-    $RebootStatus = "WARNING: A system reboot is pending."
-} else {
-    $RebootStatus = "No reboot flags detected."
-}
+$RebootStatus = if ($RebootPending) {
+    "NOTE: A system reboot is pending, but ScanHealth will run."
+} else { "No reboot flags detected." }
 
 $RebootStatus | Write-Host -ForegroundColor Cyan
 $RebootStatus | Out-File $LogFile -Append
@@ -91,29 +84,38 @@ if (-not (Wait-Job $job -Timeout ($TimeoutMs / 1000))) {
     "ERROR: DISM /ScanHealth exceeded timeout ($TimeoutMs ms). Job terminated." |
         Out-File $LogFile -Append
 
-    # Version-agnostic Stop-Job
-    $stopParams = (Get-Command Stop-Job).Parameters.Keys
-    if ($stopParams -contains 'Force') { Stop-Job $job -Force } else { Stop-Job $job }
-
+    Stop-Job $job -Force
     Remove-Job $job
     exit 3
 }
 
 $DismOutput = Receive-Job $job
 $DismOutput | Out-File $LogFile -Append
-
-# Remove job safely
-$removeParams = (Get-Command Remove-Job).Parameters.Keys
-if ($removeParams -contains 'Force') { Remove-Job $job -Force } else { Remove-Job $job }
+Remove-Job $job -Force
 
 # ---------------- Parse Output ----------------
 $logText = $DismOutput
-$corruptPattern   = "corrupt|repairable|Error: 0x"
-$ComponentSummary = if ($logText -match $corruptPattern) {
-    "Potential component store corruption detected."
+
+# Only flag corruption if DISM explicitly reports it; ignore "No component store corruption detected"
+if ($logText -match "(?i)(corrupt|repairable|Error: 0x)" -and
+    $logText -notmatch "(?i)No component store corruption detected") {
+    $ComponentSummary = "Potential component store corruption detected."
+    $ResultCode = 1
 } else {
-    "No component store corruption detected."
+    $ComponentSummary = "No component store corruption detected."
+    $ResultCode = 0
 }
+
+# ---------------- Final Output ----------------
+$FinalSummary = @"
+$ComponentSummary
+$RebootStatus
+Full log: $LogFile
+DISM log: C:\Windows\Logs\DISM\DISM.log
+CBS log:  C:\Windows\Logs\CBS\CBS.log
+"@
+Write-Host $FinalSummary -ForegroundColor Green
+$FinalSummary | Out-File $LogFile -Append
 
 # ---------------- Structured JSON Summary ----------------
 [PSCustomObject]@{
@@ -122,20 +124,10 @@ $ComponentSummary = if ($logText -match $corruptPattern) {
     Drive           = $Drive
     ComponentStatus = $ComponentSummary
     RebootPending   = $RebootPending
-    ResultCode      = if ($logText -match $corruptPattern) {1} else {0}
+    ResultCode      = $ResultCode
 } | ConvertTo-Json -Depth 2 | Out-File $LogFile -Append
-
-# ---------------- Final Output ----------------
-$FinalSummary = @"
-$ComponentSummary
-Full log: $LogFile
-DISM log: C:\Windows\Logs\DISM\DISM.log
-CBS log:  C:\Windows\Logs\CBS\CBS.log
-"@
-Write-Host $FinalSummary -ForegroundColor Green
-$FinalSummary | Out-File $LogFile -Append
 
 "==== DISM /ScanHealth END ====" | Out-File $LogFile -Append
 
-# Exit code version-agnostic
-if ($logText -match $corruptPattern) { exit 1 } else { exit 0 }
+# Exit code based solely on actual corruption
+exit $ResultCode
