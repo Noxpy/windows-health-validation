@@ -20,20 +20,21 @@
     0 = No corruption detected
     1 = Potential corruption detected
     3 = Pre-check failure, execution error, or timeout
-
-.NOTES
-    - Standalone PowerShell execution
-    - Read-only operation
 #>
 
 # ---------------- Configuration ----------------
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogRoot   = "C:\Temp\ErrorPolicyLogs"
 $LogFile   = Join-Path $LogRoot "DISM_CheckHealth_$Timestamp.log"
-$TimeoutMs = 60000
+$TimeoutMs = 30000   # 30 seconds is usually sufficient for /CheckHealth
 $Drive     = "C:"
 
-if (-not (Test-Path $LogRoot)) { New-Item -Path $LogRoot -ItemType Directory -Force | Out-Null }
+# Ensure log directory exists
+if (-not (Test-Path $LogRoot)) {
+    try { New-Item -Path $LogRoot -ItemType Directory -Force | Out-Null }
+    catch { Write-Host "ERROR: Cannot create log directory." -ForegroundColor Red; exit 3 }
+}
+
 "==== DISM /CheckHealth START ====" | Out-File $LogFile -Append
 
 # ---------------- Admin Check ----------------
@@ -42,9 +43,12 @@ function Test-IsAdmin {
     $p  = New-Object Security.Principal.WindowsPrincipal($id)
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
-if (-not (Test-IsAdmin)) { "ERROR: Administrative privileges required." | Out-File $LogFile -Append; exit 3 }
+if (-not (Test-IsAdmin)) {
+    "ERROR: Administrative privileges required." | Out-File $LogFile -Append
+    exit 3
+}
 
-# ---------------- Pending Reboot ----------------
+# ---------------- Pending Reboot Check ----------------
 function Test-PendingReboot {
     $keys = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
@@ -53,47 +57,59 @@ function Test-PendingReboot {
     foreach ($k in $keys) { if (Test-Path $k) { return $true } }
     return $false
 }
+
 $RebootPending = Test-PendingReboot
-$RebootStatus  = if ($RebootPending) {"WARNING: A system reboot is pending."} else {"No reboot flags detected."}
+$RebootStatus = if ($RebootPending) {
+    "NOTE: A system reboot is pending, but CheckHealth will run."
+} else { "No reboot flags detected." }
+
 $RebootStatus | Write-Host -ForegroundColor Cyan
 $RebootStatus | Out-File $LogFile -Append
 
-# ---------------- Disk Check ----------------
-if (-not (Test-Path "$Drive\")) { "ERROR: Target drive $Drive not accessible." | Out-File $LogFile -Append; exit 3 }
+# ---------------- Disk Availability Check ----------------
+if (-not (Test-Path "$Drive\")) {
+    "ERROR: Target drive $Drive not accessible." | Out-File $LogFile -Append
+    exit 3
+}
 
-# ---------------- Execute DISM /CheckHealth ----------------
+# ---------------- Execute DISM /CheckHealth with Timeout ----------------
 Write-Host "Starting DISM /CheckHealth..." -ForegroundColor Cyan
-$job = Start-Job -ScriptBlock { & dism.exe /Online /Cleanup-Image /CheckHealth 2>&1 | Out-String }
 
+$job = Start-Job -ScriptBlock {
+    & dism.exe /Online /Cleanup-Image /CheckHealth 2>&1 | Out-String
+}
+
+# Wait with timeout
 if (-not (Wait-Job $job -Timeout ($TimeoutMs / 1000))) {
-    "ERROR: DISM /CheckHealth exceeded timeout ($TimeoutMs ms)." | Out-File $LogFile -Append
-    if ((Get-Command Stop-Job).Parameters.Keys -contains 'Force') { Stop-Job $job -Force } else { Stop-Job $job }
+    "ERROR: DISM /CheckHealth exceeded timeout ($TimeoutMs ms). Job terminated." |
+        Out-File $LogFile -Append
+
+    Stop-Job $job -Force
     Remove-Job $job
     exit 3
 }
 
 $DismOutput = Receive-Job $job
 $DismOutput | Out-File $LogFile -Append
-if ((Get-Command Remove-Job).Parameters.Keys -contains 'Force') { Remove-Job $job -Force } else { Remove-Job $job }
+Remove-Job $job -Force
 
 # ---------------- Parse Output ----------------
 $logText = $DismOutput
-$corruptPattern = "corrupt|repairable|Error: 0x"
-$ComponentSummary = if ($logText -match $corruptPattern) { "Potential component store corruption detected." } else { "No component store corruption detected." }
 
-# ---------------- Structured JSON ----------------
-[PSCustomObject]@{
-    Timestamp       = (Get-Date).ToString("s")
-    Operation       = "DISM /CheckHealth"
-    Drive           = $Drive
-    ComponentStatus = $ComponentSummary
-    RebootPending   = $RebootPending
-    ResultCode      = if ($logText -match $corruptPattern) {1} else {0}
-} | ConvertTo-Json -Depth 2 | Out-File $LogFile -Append
+# Only flag corruption if DISM explicitly reports it; ignore "No component store corruption detected"
+if ($logText -match "(?i)(corrupt|repairable|Error: 0x)" -and
+    $logText -notmatch "(?i)No component store corruption detected") {
+    $ComponentSummary = "Potential component store corruption detected."
+    $ResultCode = 1
+} else {
+    $ComponentSummary = "No component store corruption detected."
+    $ResultCode = 0
+}
 
 # ---------------- Final Output ----------------
 $FinalSummary = @"
 $ComponentSummary
+$RebootStatus
 Full log: $LogFile
 DISM log: C:\Windows\Logs\DISM\DISM.log
 CBS log:  C:\Windows\Logs\CBS\CBS.log
@@ -101,6 +117,17 @@ CBS log:  C:\Windows\Logs\CBS\CBS.log
 Write-Host $FinalSummary -ForegroundColor Green
 $FinalSummary | Out-File $LogFile -Append
 
+# ---------------- Structured JSON Summary ----------------
+[PSCustomObject]@{
+    Timestamp       = (Get-Date).ToString("s")
+    Operation       = "DISM /CheckHealth"
+    Drive           = $Drive
+    ComponentStatus = $ComponentSummary
+    RebootPending   = $RebootPending
+    ResultCode      = $ResultCode
+} | ConvertTo-Json -Depth 2 | Out-File $LogFile -Append
+
 "==== DISM /CheckHealth END ====" | Out-File $LogFile -Append
 
-if ($logText -match $corruptPattern) { exit 1 } else { exit 0 }
+# Exit code based solely on actual corruption
+exit $ResultCode
