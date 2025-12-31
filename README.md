@@ -1,43 +1,55 @@
 ````markdown
-# windows-health-validation
+# Windows Health Validation
 
-**Audit-Ready, Compliance-Friendly, Safe Orchestration for Windows System Health**  
-This framework provides a modular, structured, and safety-first approach to validating and repairing Windows system health. It allows infrastructure engineers, security teams, and IT administrators to perform comprehensive assessments of disk integrity, Windows component store health, and system file integrity while maintaining full auditability and compliance visibility.
+**Windows Health Validation** is a modular, audit-ready framework for assessing and repairing Windows system health. It provides structured, safety-first PowerShell scripts to evaluate disk integrity, Windows component store health, and system file integrity, with full compliance and audit visibility.
 
-A modular, safety-first framework for validating and repairing Windows system health.  
-This repository provides structured PowerShell scripts to assess disk integrity, Windows component store health, and system file integrity before performing repairs or patching.
-
-The design emphasizes:  
-- Read-only validation before repair  
-- Explicit separation of safe vs disruptive actions  
-- Automation-safe execution with structured logging  
-- Alignment with enterprise patching and compliance workflows  
-- **Version-agnostic support:** Compatible with PowerShell 2.0+ to support older Windows systems (Windows 7 / Server 2008 R2 and later). This ensures scripts can run in legacy environments while maintaining audit and compliance readiness.  
+The framework is **designed for enterprise environments**, allowing IT administrators, security teams, and infrastructure engineers to perform comprehensive health checks before remediation or patching.
 
 ---
 
-## Version Compatibility
+## About the Project
+
+Windows Health Validation emphasizes evidence-based system health assessment. Rather than performing blind repairs, it:
+
+- Performs **read-only validation** before any repair actions  
+- Explicitly separates **safe** from **disruptive** operations  
+- Provides **structured logging** for compliance reporting  
+- Supports **multi-version Windows environments** (PowerShell 2.0+), including legacy systems  
+
+This ensures system integrity checks and repairs are controlled, auditable, and safe for production environments.
+
+---
+
+## Project Structure
+
+- **orchestration/** – scripts for orchestrated validation and repair  
+- **testing/** – tools to observe or modify CHKDSK flags and pending reboots  
+- **logs/** – directory for storing automated outputs  
+
+---
+
+## Supported Windows Versions
 
 | Windows Version           | PowerShell Minimum Version | Notes                                                                 |
 |---------------------------|---------------------------|-----------------------------------------------------------------------|
-| Windows 7 / Server 2008 R2| 2.0                       | Oldest supported OS; read-only scripts will function; repair scripts require admin privileges. |
+| Windows 7 / Server 2008 R2| 2.0                       | Read-only scripts function; repair scripts require admin privileges. |
 | Windows 8 / Server 2012   | 3.0                       | Fully compatible.                                                     |
 | Windows 8.1 / Server 2012 R2 | 4.0                    | Fully compatible.                                                     |
 | Windows 10 / Server 2016+ | 5.1                       | Fully compatible; can use PowerShell 7.x for newer features.          |
-| Windows 11 / Server 2022  | 5.1+                      | Latest systems; scripts run unchanged, backward-compatible.           |
+| Windows 11 / Server 2022  | 5.1+                      | Latest systems; backward-compatible scripts.                          |
 
-> **Rationale:** Maintaining compatibility with PowerShell 2.0+ ensures the framework can run on legacy systems for audit, compliance, and enterprise baseline consistency. Older systems may be encountered in long-lived infrastructure environments or during phased upgrade cycles.  
+> Maintaining PowerShell 2.0+ compatibility ensures audit and compliance readiness in legacy enterprise environments.
 
 ---
 
-## Intended Usage
+## Core Features
 
-- Run read-only validation prior to patching or remediation.
-- Observe scheduled CHKDSK flags and pending reboot indicators using `observe-chkdsk-and-reboot-flags.ps1`.
-- Set or remove CHKDSK flags for testing with `set-chkdsk-boot-flag.ps1` and `remove-chkdsk-boot-flag.ps1`.
-- Run orchestrated read-only validation with `health-validate-readonly.ps1`.
-- Execute repair actions only when required.
-- Review and store logs for audit and compliance purposes.
+- **Read-only validation first** to prevent unintended changes  
+- **Explicit safe vs. disruptive action separation**  
+- **Automation-safe execution** with structured logging  
+- **Compliance alignment** for enterprise patching and auditing  
+- **Multi-drive and all-fixed-drive support**  
+- **Version-agnostic PowerShell support** from 2.0 onwards  
 
 ---
 
@@ -151,33 +163,49 @@ Pending reboot keys:
 
 ---
 
-## Notes
+## Recommended Execution Order
 
-* Scripts are read-only by default unless specifically performing repairs.
-* Compatible with PowerShell 2.0+ for legacy Windows systems; ensures compliance testing is possible on older environments.
-* Administrator privileges are required for modifying BootExecute and scheduling CHKDSK flags.
-* Use the `logs/` folder for storing or reviewing automated outputs.
-* Supports multi-drive operations, all fixed drives, and safe orchestration.
+1. Observe current CHKDSK flags and pending reboot indicators
+2. Validate DISM and SFC health using read-only scripts
+3. Schedule CHKDSK flags if required for testing or repair
+4. Run repair scripts only after validation and with logs enabled
+5. Reboot only if prompted by pending operations
 
 ---
 
 ## Compliance Notes
 
-* Read-only validation ensures no unintended changes occur during audits or pre-deployment checks.
-* Maintaining PowerShell 2.0+ compatibility allows testing in legacy enterprise environments where newer PowerShell versions may not be installed.
-* All scripts include explicit logging, making them suitable for compliance reporting and enterprise auditing.
-* Multi-drive support and all-fixed-drive detection ensure that all disks can be assessed for compliance, reducing risk during patch cycles or system maintenance.
+* Read-only validation ensures **no unintended changes** during audits
+* Full logging makes the framework suitable for **enterprise auditing**
+* Multi-drive and all-fixed-drive detection reduces risk during **patch cycles**
+* Compatible with legacy systems for **baseline compliance consistency**
 
 ---
 
+## Disclaimer
 
+All scripts are **non-destructive by default**. Administrative privileges are required only for modifying CHKDSK flags or performing repairs. Use in accordance with organizational policies and on authorized systems only.
 
-```
-## Recommended Execution Order
+---
 
-1. Observe current CHKDSK flags and pending reboot indicators.
-2. Validate DISM and SFC health using read-only scripts.
-3. Schedule CHKDSK flags if required for testing or repair.
-4. Run repair scripts only after validation and with logs enabled.
-5. Reboot only if prompted by pending operations.
-```
+## Contributing
+
+Contributions are welcome. To contribute:
+
+1. Fork the repository and create a feature branch
+2. Add or improve PowerShell scripts, validation checks, or logging functionality
+3. Ensure all changes are safe, accurate, and maintain audit/compliance readiness
+4. Test thoroughly in a controlled environment before submission
+5. Submit a pull request for review
+
+---
+
+## Author / Maintainer
+
+Maintained by 0xMarturano.
+
+---
+
+## License
+
+See the `LICENSE` file for licensing details.
