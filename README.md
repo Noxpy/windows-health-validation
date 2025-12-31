@@ -1,3 +1,5 @@
+
+
 ```markdown
 # windows-health-validation
 
@@ -75,17 +77,11 @@ flowchart TD
     C --> D[SFC /Scannow Check]
     D --> E{Repair Needed?}
     E -- Yes --> F[Schedule CHKDSK /f or /r (if testing)]
-    F --> G[Run Repair Scripts: DISM /RestoreHealth / Chkdsk / SFC]
+    F --> G[Run Repair Scripts: DISM /RestoreHealth / CHKDSK / SFC]
     G --> H[Log Results]
     E -- No --> H
     H --> I[End: Validation Complete]
-````
 
----
-
-## Multi-Drive CHKDSK Testing Flow
-
-```mermaid
 flowchart TD
     A[Start: CHKDSK Testing Scripts] --> B{Select Drive Scope}
     B -- Single Drive --> C[Enter Drive Letter]
@@ -102,13 +98,13 @@ flowchart TD
     I --> L[End]
     J --> L
     K --> L
-```
+````
 
 ---
 
 ## Intended Usage
 
-1. Run **read-only validation** prior to patching or remediation.
+1. Run read-only validation prior to patching or remediation.
 2. Observe scheduled CHKDSK flags and pending reboot indicators using `observe-chkdsk-and-reboot-flags.ps1`.
 3. Set or remove CHKDSK flags for testing with `set-chkdsk-boot-flag.ps1` and `remove-chkdsk-boot-flag.ps1`.
 4. Run orchestrated read-only validation with `health-validate-readonly.ps1`.
@@ -230,7 +226,7 @@ Pending reboot keys:
 ## Notes
 
 * Scripts are **read-only by default** unless specifically performing repairs.
-* Compatible with **PowerShell 2.0+** for legacy Windows systems; supports compliance testing in older environments.
+* Compatible with **PowerShell 2.0+** for legacy Windows systems; ensures compliance testing is possible on older environments.
 * Administrator privileges are required for modifying BootExecute and scheduling CHKDSK flags.
 * Use the `logs/` folder for storing or reviewing automated outputs.
 * Supports multi-drive operations, all fixed drives, and safe orchestration.
@@ -240,7 +236,7 @@ Pending reboot keys:
 ## Compliance Notes
 
 * Read-only validation ensures no unintended changes occur during audits or pre-deployment checks.
-* Maintaining **PowerShell 2.0+ compatibility** allows testing in legacy enterprise environments where newer PowerShell versions may not be installed.
+* Maintaining PowerShell 2.0+ compatibility allows testing in legacy enterprise environments where newer PowerShell versions may not be installed.
 * All scripts include explicit logging, making them suitable for compliance reporting and enterprise auditing.
 * Multi-drive support and all-fixed-drive detection ensure that all disks can be assessed for compliance, reducing risk during patch cycles or system maintenance.
 
@@ -253,7 +249,3 @@ Pending reboot keys:
 3. Schedule CHKDSK flags if required for testing or repair.
 4. Run repair scripts only after validation and with logs enabled.
 5. Reboot only if prompted by pending operations.
-
-```
-
-
