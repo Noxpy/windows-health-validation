@@ -170,6 +170,9 @@ Pending reboot keys:
 
 ---
 
+
+
+```
 ## Recommended Execution Order
 
 1. Observe current CHKDSK flags and pending reboot indicators.
@@ -177,6 +180,4 @@ Pending reboot keys:
 3. Schedule CHKDSK flags if required for testing or repair.
 4. Run repair scripts only after validation and with logs enabled.
 5. Reboot only if prompted by pending operations.
-
-```
 ```
