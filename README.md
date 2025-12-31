@@ -1,5 +1,3 @@
-Here’s the fully updated `README.md` with an executive-friendly summary at the top emphasizing audit, compliance, and safe orchestration. You can copy and paste the whole thing:
-
 ```markdown
 # windows-health-validation
 
