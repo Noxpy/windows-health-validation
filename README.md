@@ -202,7 +202,7 @@ Contributions are welcome. To contribute:
 
 ## Author / Maintainer
 
-Maintained by 0xMarturano.
+Maintained by Noxpy.
 
 ---
 
