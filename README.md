@@ -1,4 +1,4 @@
-````markdown
+
 # Windows Health Validation
 
 **Windows Health Validation** is a modular, audit-ready framework for assessing and repairing Windows system health. It provides structured, safety-first PowerShell scripts to evaluate disk integrity, Windows component store health, and system file integrity, with full compliance and audit visibility.
